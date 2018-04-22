@@ -13,13 +13,19 @@
 		{{ end }}
 	{{ else if .Network }}
 		# {{ .Container.Name }}
-		{{ if .Network.IP }}
+		{{ if .Container.Env.UPSTREAM_NAME }}
+			{{ if .Container.Env.VIRTUAL_PORT }}
+				server {{ .Container.Env.UPSTREAM_NAME }}:{{ .Container.Env.VIRTUAL_PORT }};
+			{{ else }}
+				server {{ .Container.Env.UPSTREAM_NAME }};
+			{{ end }}
+		{{ else if .Network.IP }}
 			server {{ .Network.IP }} down;
 		{{ else }}
 			server 127.0.0.1 down;
 		{{ end }}
 	{{ end }}
-	
+
 {{ end }}
 
 # If we receive X-Forwarded-Proto, pass it through; otherwise, pass along the
@@ -129,9 +135,14 @@ upstream {{ $upstream_name }} {
 
 	{{ range $knownNetwork := $CurrentContainer.Networks }}
 		{{ range $containerNetwork := $container.Networks }}
-			{{ if (and (ne $containerNetwork.Name "ingress") (or (eq $knownNetwork.Name $containerNetwork.Name) (eq $knownNetwork.Name "host"))) }}
-				## Can be connected with "{{ $containerNetwork.Name }}" network
-
+			{{ if (and (ne $containerNetwork.Name "ingress") (or (or (eq $knownNetwork.Name $containerNetwork.Name) (eq $knownNetwork.Name "host")) $container.Env.UPSTREAM_NAME)) }}
+				{{/* Define $upstream_name if the host is not a docker container */}}
+				{{ if $container.Env.UPSTREAM_NAME }}
+					{{ $upstream_name := $container.Env.UPSTREAM_NAME }}
+					## Host is not a docker container
+				{{ else }}
+					## Can be connected with "{{ $containerNetwork.Name }}" network
+				{{ end }}
 				{{/* If only 1 port exposed, use that */}}
 				{{ if eq $addrLen 1 }}
 					{{ $address := index $container.Addresses 0 }}
@@ -142,9 +153,6 @@ upstream {{ $upstream_name }} {
 					{{ $address := where $container.Addresses "Port" $port | first }}
 					{{ template "upstream" (dict "Container" $container "Address" $address "Network" $containerNetwork) }}
 				{{ end }}
-			{{ else }}
-				# Cannot connect to network of this container
-				server 127.0.0.1 down;
 			{{ end }}
 		{{ end }}
 	{{ end }}
@@ -256,14 +264,14 @@ server {
 	ssl_dhparam {{ printf "/etc/nginx/certs/%s.dhparam.pem" $cert }};
 	{{ end }}
 
-	{{ if (exists (printf "/etc/nginx/certs/%s.chain.pem" $cert)) }}
+	{{ if (exists (printf "/etc/nginx/certs/%s.chain.crt" $cert)) }}
 	ssl_stapling on;
 	ssl_stapling_verify on;
-	ssl_trusted_certificate {{ printf "/etc/nginx/certs/%s.chain.pem" $cert }};
+	ssl_trusted_certificate {{ printf "/etc/nginx/certs/%s.chain.crt" $cert }};
 	{{ end }}
 
 	{{ if (and (ne $https_method "noredirect") (ne $hsts "off")) }}
-	add_header Strict-Transport-Security "{{ trim $hsts }}" always;
+	add_header Strict-Transport-Security "{{ trim $hsts }}";
 	{{ end }}
 
 	{{ if (exists (printf "/etc/nginx/vhost.d/%s" $host)) }}
